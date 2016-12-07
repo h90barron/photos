@@ -125,7 +125,8 @@ function load_album_list(callback) {
               return;
             }
             if(stats.isDirectory()) {
-              only_dirs.push(files[index]);
+              var obj = { name: files[index] };
+              only_dirs.push(obj);
               console.log(only_dirs[index]);
             }
             iter(index + 1);
@@ -136,21 +137,159 @@ function load_album_list(callback) {
 }
 
 
-function handle_incoming_request(req, res) {
-  console.log("INCOMING REQUEST: " + req.method + " " + req.url);
-  load_album_list(function (err, albums) {
-    if (err) {
-      res.writeHead(503, {"Content-Type": "application/json"});
-      res.end(JSON.Stringify(err) + "\n");
+function load_album(album_name, callback) {
+  fs.readdir(
+    "albums/" + album_name,
+    function(err, files) {
+      if (err) {
+        if (err.code == "ENOENT") {
+          callback(no_such_album());
+      } else {
+        callback(make_error("file error", JSON.stringify(err)));
+      }
       return;
     }
     
-    var out = { error: null,
-                data: { albums: albums},};
-    res.writeHead(200, {"Content-Type": "application/json"});
-    res.end(JSON.stringify(out) + "\n");
-    console.log("End response");
+    var only_files = [];
+    var path = "albums/" + album_name + "/";
+    
+    (function iter(index) {
+      if (index == files.length) {
+        var obj = { short_name: album_name,
+                    photos: only_files };
+        callback(null, obj);
+        return;
+      }
+      
+      fs.stat(
+        path + files[index],
+        function (err, stats) {
+          if (err) {
+            callback(make_error("file error", JSON.stringify(err)));
+            return;
+          }
+          if (stats.isFile()) {
+            var obj = { filename: files[index], desc: files[index] };
+            only_files.push(obj);
+          }
+          iter(index + 1);
+        });
+    })(0);
+      
+    });
+}
+
+// function load_album(album_name, callback) {
+//   //under the assumption that any directoy under albums is an album
+//   fs.readdir(
+//     "albums/" + album_name,
+//     function (err, files) {
+//       if (err) {
+//         if (err.code == "ENOENT") {
+//           callback(no_such_album());
+//         } else {
+//           callback(make_error("file error",
+//                               JSON.stringify(err)));
+//         }
+//         return
+//       }
+      
+//       var only_files = [];
+//       var path = "albums/" + album_name + "/";
+      
+//       (function iter(index) {
+//         if( index == files.length) {
+//           var obj = { short_name: album_name,
+//                       photos: only_files };
+//         }
+        
+//         fs.stat(
+//           path + files[index],
+//           function (err, stats) {
+//             if (err) {
+//               callback(make_error("file_error", JSON.stringify(err)));
+//               return;
+//             }
+//             if (stats.isFile()) {
+//               var obj = { filename: files[index],
+//                           desc: files[index] };
+//               only_files.push(obj);
+//             }
+//             iter(index + 1);
+//           });
+//       })(0);
+//     });
+// }
+
+
+
+function handle_incoming_request(req, res) {
+  console.log("INCOMING REQUEST: " + req.method + " " + req.url);
+  if (req.url == '/albums.json') {
+    handle_list_albums(req, res);
+  } else if (req.url.substr(0, 7) == '/albums'
+            && req.url.substr(req.url.length - 5) == '.json') {
+              handle_get_album(req, res);
+  } else {
+    send_failure(res, 404, invalid_resource());
+  }
+}
+
+function handle_list_albums(req, res) {
+  load_album_list(function(err, albums) {
+    if (err) {
+      send_failure(res, 500, err);
+      return;
+    }
+    
+    send_success(res, { albums: albums});
   });
+}
+
+function handle_get_album(req, res) {
+  var album_name = req.url.substr(7, req.url.length - 12);
+  console.log(album_name);
+  
+  load_album(
+    album_name,
+    function (err, album_contents) {
+      if (err && err.error == "no_such_album") {
+        send_failure(res, 404, err);
+      } else if (err) {
+        send_failure(res, 500, err);
+      } else {
+        send_success(res, { album_data: album_contents});
+      }
+    });
+}
+
+function make_error(err, msg) {
+  var e = new Error(msg);
+  e.code = err;
+  return e;
+}
+
+function send_success(res, data) {
+  res.writeHead(200, {"Content-Type": "application/json"});
+  var output = { error: null, data: data };
+  res.end(JSON.stringify(output) + "\n");
+}
+
+function send_failure(res, code, err) {
+  var err_code = (err.code) ? err.code : err.name;
+  //console.log(code);
+  res.writeHead(code, { "Content-Type" : "application/json"});
+  res.end(JSON.stringify({ error: err_code, message: err.message }) + "\n");
+}
+
+function invalid_resource() {
+  return make_error("invalid_resource",
+                    "the requested resource does not exist");
+}
+
+function no_such_album() {
+  return make_error("no_such_album",
+                    "The specified album does not exist");
 }
 
 var s = http.createServer(handle_incoming_request);
@@ -159,57 +298,3 @@ s.listen(process.env.PORT, process.env.IP);
 
 
 
-
-// function compute_intersection(arr1, arr2, callback) {
-//   var bigger = arr1.length > arr2.length ? arr1 : arr2;
-//   var smaller = bigger == arr1 ? arr2 : arr1;
-//   var biglen = bigger.length;
-//   var smlen = smaller.length;
-  
-//   var start = 0;
-//   var size = 10;
-//   var results = [];
-//   function sub_compute_interseciton () {
-//     for (var i = start; i < (start + size) && biglen; i++) {
-//       for (var j = 0; j < smlen; j++) {
-//         if(bigger[i] == smaller[j]){
-//           results[results.length] = bigger[i];
-//           //console.log(bigger[i]);
-//           break;
-//         }
-//       }
-//     }
-//     if(i >= biglen) {
-//       callback(null, results);
-//     } else {
-//         start += size;
-//         process.nextTick(sub_compute_interseciton);
-//       }
-//     }
-//     sub_compute_interseciton();
-// }
-
-
-// var a = [];
-// var b = [];
-
-// for (var i = 1; i < 30; i++) {
-//   a.push(i);
-// }
-
-// for (var i = 1; i < 30; i++) {
-//   if (i % 3 == 0) {
-//     b.push(i);
-//   }
-// }
-
-// compute_intersection(a, b, function (err, results) {
-//   if(err) {
-//     console.log(err);
-//   } else {
-//     for(var i = 0; i < results.length; i++) {
-//       console.log(results[i]);
-//     }
-//   }
-// })
-  
