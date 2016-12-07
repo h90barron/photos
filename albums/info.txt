@@ -11,3 +11,13 @@ t
 e
 x
 t
+
+modify hande incoming request to parse the url
+parse query string values for page and page size
+modify load album to support new params
+
+function handle_incoming_request(req, res) {
+    console.log("INCOMING REQUEST: " + req.method + " " + req.url);
+    if (req.url == '/albums.json' {
+        handle_list_albums(req, res);
+    } else if (
