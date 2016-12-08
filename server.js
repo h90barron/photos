@@ -184,6 +184,39 @@ function load_album(album_name, page, page_size, callback) {
     });
 }
 
+function do_rename(album_name, new_album_name, core_url, callback) {
+    var trim_url = core_url.split('/');
+    trim_url.pop();
+    trim_url.shift();
+    var original_url = trim_url.join('/');
+    //console.log(original_url +"     " + original_url.replace(album_name, new_album_name));
+    
+    fs.readdir(
+    "albums",
+    function (err, files) {
+      if(err) {
+        callback(err);
+        return;
+      }
+      
+      
+      for (var i = 0; i < files.length; i++) {
+        if (files[i] == album_name) {
+          fs.rename(original_url, original_url.replace(album_name, new_album_name), function (err, data) {
+            if (err) {
+              callback(err);
+              console.log(original_url + "    " + original_url.replace(album_name, new_album_name));
+              console.log(err.code, err.msg);
+            }
+            console.log("File change Success!!");
+            return;
+          });
+        } 
+      }
+    });
+      
+}
+
 function handle_incoming_request(req, res) {
   console.log("INCOMING REQUEST: " + req.method + " " + req.url);
   
@@ -192,6 +225,9 @@ function handle_incoming_request(req, res) {
   
   if (core_url == '/albums.json') {
     handle_list_albums(req, res);
+    } else if (core_url.substr(core_url.length -12) == '/rename.json'
+      && req.method.toLowerCase() == 'post') {
+        handle_rename_album(req, res);
     } else if (core_url.substr(0, 7) == '/albums' 
               && core_url.substr(core_url.length - 5) == '.json') {
                 handle_get_album(req, res);
@@ -202,17 +238,69 @@ function handle_incoming_request(req, res) {
 }
 
 
-// function handle_incoming_request(req, res) {
-//   console.log("INCOMING REQUEST: " + req.method + " " + req.url);
-//   if (req.url == '/albums.json') {
-//     handle_list_albums(req, res);
-//   } else if (req.url.substr(0, 7) == '/albums'
-//             && req.url.substr(req.url.length - 5) == '.json') {
-//               handle_get_album(req, res);
-//   } else {
-//     send_failure(res, 404, invalid_resource());
-//   }
-// }
+function handle_rename_album(req, res) {
+  var core_url = req.parsed_url.pathname;
+  var parts = core_url.split('/');
+  if (parts.length != 4) {
+    send_failure(res, 404, invalid_resource());
+    return;
+  }
+  
+  var album_name = parts[2];
+  
+  //get POST data from request
+  var json_body = '';
+  req.on(
+    'readable',
+    function () {
+      var d = req.read();
+      if (d) {
+        if (typeof d == 'string') {
+          json_body += d;
+        } else if (typeof d == 'object' && d instanceof Buffer) {
+          json_body += d.toString('utf8');
+        }
+      }
+    });
+    
+    req.on(
+      'end',
+      function () {
+        // check for body
+        if (json_body) {
+          try {
+            //try-catch since JSON.parse will throw error
+            var album_data = JSON.parse(json_body);
+            if (!album_data.album_name) {
+              send_failure(res, 403, missing_data('album_name'));
+              return;
+            }
+          } catch (e) {
+            // invalid json
+            send_failure(res, 403, bad_json());
+            return;
+        }
+        
+        
+        do_rename(
+          album_name,
+          album_data.album_name,
+          core_url,
+          function (err, results) {
+            if (err && err.code == "ENOENT") {
+              send_failure(res, 403, no_such_album());
+            } else if (err) {
+                send_failure(res, 500, file_error(err));
+                return;
+            }
+            send_success(res, null);
+          });
+      } else { 
+        send_failure(res, 403, bad_json());
+        res.end
+      }
+    });
+}
 
 function handle_list_albums(req, res) {
   load_album_list(function(err, albums) {
@@ -270,6 +358,21 @@ function send_failure(res, code, err) {
   //console.log(code);
   res.writeHead(code, { "Content-Type" : "application/json"});
   res.end(JSON.stringify({ error: err_code, message: err.message }) + "\n");
+}
+
+function missing_data(missing_val) {
+  return make_error(missing_val,
+                    "JSON is missing the value for " + missing_val);
+}
+
+function file_error(err) {
+  return make_error(err,
+                    "There was a problem with the specified file" + " :: " + err.msg);
+}
+
+function bad_json() {
+  return make_error("json_error",
+                    "There submitted json is invalid. Check format");
 }
 
 function invalid_resource() {
